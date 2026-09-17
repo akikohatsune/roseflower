@@ -1,4 +1,4 @@
-﻿use serde::Deserialize;
+use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
@@ -18,6 +18,8 @@ pub struct ServerConfig {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    #[serde(default = "default_base_url")]
+    pub base_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -29,7 +31,7 @@ pub struct DatabaseConfig {
 }
 
 fn default_name() -> String {
-    "AyanomiBancho - Roseflower Multiplayer".to_string()
+    "AyanomiBancho".to_string()
 }
 
 fn default_host() -> String {
@@ -38,6 +40,10 @@ fn default_host() -> String {
 
 fn default_port() -> u16 {
     5003
+}
+
+fn default_base_url() -> String {
+    "https://hatsuneakiko.io.vn".to_string()
 }
 
 fn default_db_path() -> String {
@@ -54,6 +60,7 @@ impl Default for ServerConfig {
             name: default_name(),
             host: default_host(),
             port: default_port(),
+            base_url: default_base_url(),
         }
     }
 }

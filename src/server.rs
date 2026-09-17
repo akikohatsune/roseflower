@@ -38,6 +38,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(multi_page_handler))
         .route("/multi", get(multi_page_handler))
+        .route("/favicon.ico", get(favicon_handler))
         .route("/health", get(health_check))
         .route("/api/multi/rooms", get(list_rooms_api))
         .route("/api/multi/rooms/{id}", get(get_room_api))
@@ -46,6 +47,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/multi/disband", post(disband_room_api))
         .route("/api/multi/finish", post(finish_match_api))
         .with_state(state)
+}
+
+async fn favicon_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let target = if !state.config.server.base_url.is_empty() {
+        format!("{}/static/favicon.png", state.config.server.base_url.trim_end_matches('/'))
+    } else {
+        "https://hatsuneakiko.io.vn/static/favicon.png".to_string()
+    };
+    axum::response::Redirect::temporary(&target)
 }
 
 async fn health_check() -> Json<serde_json::Value> {
@@ -231,15 +241,18 @@ async fn multi_page_handler(
     headers: HeaderMap,
 ) -> Html<String> {
     let host = headers
-        .get("host")
+        .get("x-forwarded-host")
+        .or_else(|| headers.get("host"))
         .and_then(|h| h.to_str().ok())
         .unwrap_or("")
         .to_lowercase();
     let base_url = if host.starts_with("roseflower.") {
         let domain = host.trim_start_matches("roseflower.");
         format!("https://{}", domain)
+    } else if !state.config.server.base_url.is_empty() {
+        state.config.server.base_url.trim_end_matches('/').to_string()
     } else {
-        "".to_string()
+        "https://hatsuneakiko.io.vn".to_string()
     };
 
     let rooms = db::get_all_live_rooms(&state.db).await.unwrap_or_default();
@@ -414,7 +427,26 @@ async fn multi_page_handler(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Multiplayer Rooms - AyanomiBancho</title>
+    <link rel="icon" type="image/png" href="{base_url}/static/favicon.png">
+    <link rel="shortcut icon" href="{base_url}/favicon.ico">
+    <title>Live Multiplayer Rooms - {server_name}</title>
+
+    <!-- Discord & Open Graph / SEO Meta Tags -->
+    <meta name="theme-color" content="#f472b6">
+    <meta name="description" content="Live monitoring of osu! multiplayer lobbies, player slots, beatmaps, and round match results on {server_name}.">
+    <meta property="og:site_name" content="{server_name}">
+    <meta property="og:title" content="Live Multiplayer Rooms - {server_name}">
+    <meta property="og:description" content="Live monitoring of osu! multiplayer lobbies, player slots, beatmaps, and round match results on {server_name}.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://roseflower.hatsuneakiko.io.vn/multi">
+    <meta property="og:image" content="{base_url}/static/logo.png">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Live Multiplayer Rooms - {server_name}">
+    <meta name="twitter:description" content="Live monitoring of osu! multiplayer lobbies, player slots, beatmaps, and round match results on {server_name}.">
+    <meta name="twitter:image" content="{base_url}/static/logo.png">
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     <style>
@@ -837,8 +869,8 @@ async fn multi_page_handler(
 <body>
     <nav>
         <div class="nav-container">
-            <a href="{base_url}/" class="nav-brand">
-                <span>AyanomiBancho</span>
+            <a href="{base_url}/" class="nav-brand" style="display: flex; align-items: center; gap: 0.75rem;">
+                <img src="{base_url}/static/logo.png" alt="{server_name}" style="height: 38px; width: auto; max-width: 220px; object-fit: contain; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4));">
                 <span class="nav-brand-badge">Multiplayer</span>
             </a>
             <ul class="nav-links">
@@ -877,13 +909,18 @@ async fn multi_page_handler(
     </main>
 
     <footer>
-        <div style="font-weight: 600; margin-bottom: 0.4rem; color: var(--text-main);">AyanomiBancho</div>
-        <div>© 2026 AyanomiBancho • Roseflower Dedicated Multiplayer Microservice</div>
+        <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 0.8rem;">
+            <img src="{base_url}/static/logo.png" alt="{server_name}" style="height: 32px; width: auto; object-fit: contain; opacity: 0.85;">
+        </div>
+        <div style="font-weight: 500; color: var(--text-muted);">
+            © 2026 <b style="color: var(--text-main);">{server_name}</b> • Roseflower Dedicated Multiplayer Microservice
+        </div>
         <div class="footer-links">
             <a href="{base_url}/">Home</a>
             <a href="{base_url}/leaderboard">Leaderboard</a>
             <a href="/multi">Multiplayer</a>
             <a href="{base_url}/rule">Rules</a>
+            <a href="{base_url}/changelog">Changelog</a>
             <a href="{base_url}/staff">Staff & Credits</a>
             <a href="{base_url}/connect">Connect</a>
         </div>

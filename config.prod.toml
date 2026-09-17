@@ -5,5 +5,4 @@ port = 5003
 base_url = "https://hatsuneakiko.io.vn"
 
 [database]
-path = "../ayanomibancho!/data/roseflower.db"
-fallback_path = "data/roseflower.db"
+path = "../data/roseflower.db"
