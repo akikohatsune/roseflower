@@ -923,6 +923,7 @@ async fn multi_page_handler(
             <a href="{base_url}/changelog">Changelog</a>
             <a href="{base_url}/staff">Staff & Credits</a>
             <a href="{base_url}/connect">Connect</a>
+            <a href="https://status.hatsuneakiko.io.vn/" target="_blank" rel="noopener noreferrer">Status</a>
         </div>
     </footer>
 </body>
