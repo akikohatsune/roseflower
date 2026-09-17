@@ -1,4 +1,4 @@
-﻿# Roseflower
+# Roseflower
 
 Dedicated real-time multiplayer tracking and management microservice for [AyanomiBancho](https://github.com/akikohatsune/ayanomibancho).
 
@@ -33,3 +33,11 @@ fallback_path = "data/roseflower.db"
 ```bash
 cargo run --release
 ```
+
+## Related Repositories
+- Core Bancho & Gateway:
+  - GitHub: https://github.com/akikohatsune/ayanomibancho
+  - GitLab: https://gitlab.com/luminehq/ayanomibancho
+- Frontend Web Dashboard:
+  - GitHub: https://github.com/akikohatsune/ayanomibancho_frontend
+  - GitLab: https://gitlab.com/luminehq/ayanomibancho_frontend
