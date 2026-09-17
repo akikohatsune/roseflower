@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::db::{self, DbLiveRoom, DbMultiGame, DbMultiScore, DbPool};
 use axum::extract::{Path as AxPath, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -226,7 +226,22 @@ fn format_number(n: i64) -> String {
     result.chars().rev().collect()
 }
 
-async fn multi_page_handler(State(state): State<AppState>) -> Html<String> {
+async fn multi_page_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Html<String> {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+    let base_url = if host.starts_with("roseflower.") {
+        let domain = host.trim_start_matches("roseflower.");
+        format!("https://{}", domain)
+    } else {
+        "".to_string()
+    };
+
     let rooms = db::get_all_live_rooms(&state.db).await.unwrap_or_default();
     let stats = db::get_stats(&state.db).await.unwrap_or(db::MultiStatsSummary {
         active_rooms: rooms.len(),
@@ -236,17 +251,26 @@ async fn multi_page_handler(State(state): State<AppState>) -> Html<String> {
 
     let mut rooms_html = String::new();
     if rooms.is_empty() {
-        rooms_html.push_str(r###"
-        <div style="text-align: center; padding: 4rem 2rem; background: rgba(30, 41, 59, 0.45); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; margin-top: 1rem; backdrop-filter: blur(12px);">
-            <div style="width: 64px; height: 64px; margin: 0 auto 1.2rem auto; border-radius: 50%; background: rgba(244, 114, 182, 0.15); display: flex; align-items: center; justify-content: center; border: 1px solid rgba(244, 114, 182, 0.3); color: #f472b6;">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"></path></svg>
+        rooms_html.push_str(&format!(
+            r###"
+            <div class="empty-state">
+                <div class="empty-icon">
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                        <path d="M6 12h4m-2-2v4m7-2h.01m3 0h.01"></path>
+                    </svg>
+                </div>
+                <h3>No Active Multiplayer Rooms</h3>
+                <p>
+                    There are currently no active lobbies on the server. Connect via your osu! client, create or join a room in the multiplayer lobby, and watch live tracking here!
+                </p>
+                <div style="margin-top: 1.5rem;">
+                    <a href="{base_url}/connect" class="btn btn-primary">How to Connect & Play</a>
+                </div>
             </div>
-            <h3 style="font-size: 1.4rem; font-weight: 800; color: #fff; margin-bottom: 0.5rem;">No Active Multiplayer Rooms</h3>
-            <p style="color: #94a3b8; font-size: 0.95rem; max-width: 520px; margin: 0 auto 1.5rem auto; line-height: 1.6;">
-                There are currently no active lobbies on the server. Connect via your osu! client, create or join a room in the multiplayer lobby, and watch live tracking here!
-            </p>
-        </div>
-        "###);
+            "###,
+            base_url = base_url
+        ));
     } else {
         for item in &rooms {
             let r = &item.room;
@@ -258,36 +282,36 @@ async fn multi_page_handler(State(state): State<AppState>) -> Html<String> {
 
             let map_link = if r.beatmap_id > 0 {
                 format!(
-                    r###"<a href="https://osu.ppy.sh/b/{}" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: none; font-weight: 600;">{}</a>"###,
+                    r###"<a href="https://osu.ppy.sh/b/{}" target="_blank" rel="noopener noreferrer" class="map-link">{}</a>"###,
                     r.beatmap_id, html_escape(&r.beatmap_name)
                 )
             } else {
-                format!(r###"<span style="color: #94a3b8;">{}</span>"###, html_escape(&r.beatmap_name))
+                format!(r###"<span class="map-muted">{}</span>"###, html_escape(&r.beatmap_name))
             };
 
             let mut slots_html = String::new();
             for slot in &item.slots {
                 let status_pill = match slot.status {
-                    1 => r#"<span style="color: #94a3b8; font-size: 0.75rem;">Not Ready</span>"#,
-                    2 => r#"<span style="color: #4ade80; font-weight: 700; font-size: 0.75rem;">✓ Ready</span>"#,
-                    4 => r#"<span style="color: #f472b6; font-weight: 700; font-size: 0.75rem;">Playing</span>"#,
-                    8 => r#"<span style="color: #38bdf8; font-weight: 700; font-size: 0.75rem;">Completed</span>"#,
-                    _ => r#"<span style="color: #64748b; font-size: 0.75rem;">Open</span>"#,
+                    1 => r#"<span class="slot-status not-ready">Not Ready</span>"#,
+                    2 => r#"<span class="slot-status ready">✓ Ready</span>"#,
+                    4 => r#"<span class="slot-status playing">Playing</span>"#,
+                    8 => r#"<span class="slot-status completed">Completed</span>"#,
+                    _ => r#"<span class="slot-status open">Open</span>"#,
                 };
 
                 let team_dot = match slot.team {
-                    1 => r#"<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; margin-right:4px;" title="Blue Team"></span>"#,
-                    2 => r#"<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#3b82f6; margin-right:4px;" title="Red Team"></span>"#,
+                    1 => r#"<span class="team-dot blue" title="Blue Team"></span>"#,
+                    2 => r#"<span class="team-dot red" title="Red Team"></span>"#,
                     _ => "",
                 };
 
                 slots_html.push_str(&format!(
                     r###"
-                    <div style="background: rgba(15, 23, 42, 0.6); padding: 0.6rem 0.8rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
-                        <div style="display: flex; align-items: center; gap: 0.5rem; overflow: hidden;">
-                            <span style="font-family: monospace; font-size: 0.8rem; color: #64748b;">#{:02}</span>
+                    <div class="slot-card">
+                        <div class="slot-user">
+                            <span class="slot-num">#{:02}</span>
                             {team_dot}
-                            <span style="font-weight: 600; font-size: 0.85rem; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px;">{}</span>
+                            <span class="slot-name">{}</span>
                         </div>
                         <div>{status_pill}</div>
                     </div>
@@ -300,15 +324,15 @@ async fn multi_page_handler(State(state): State<AppState>) -> Html<String> {
             let mut match_history_html = String::new();
             if !item.games.is_empty() {
                 match_history_html.push_str(r###"
-                <div style="margin-top: 1.2rem; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 1rem;">
-                    <div style="font-size: 0.85rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.6rem;">Recent Rounds Played</div>
+                <div style="margin-top: 1.2rem; border-top: 1px solid var(--card-border-subtle); padding-top: 1rem;">
+                    <div class="section-lbl">Recent Rounds Played</div>
                     <div style="display: flex; flex-direction: column; gap: 0.6rem;">
                 "###);
 
                 for (idx, game_with_scores) in item.games.iter().enumerate() {
                     let g = &game_with_scores.game;
                     let winner_badge = if !g.winner_name.is_empty() {
-                        format!(r###"<span style="color: #fbbf24; font-weight: 700; font-size: 0.8rem;">👑 Winner: {}</span>"###, html_escape(&g.winner_name))
+                        format!(r###"<span style="color: var(--amber); font-weight: 700; font-size: 0.8rem;">👑 Winner: {}</span>"###, html_escape(&g.winner_name))
                     } else {
                         String::new()
                     };
@@ -317,7 +341,7 @@ async fn multi_page_handler(State(state): State<AppState>) -> Html<String> {
                     for s in &game_with_scores.scores {
                         let pass_str = if s.passed == 1 { "✓" } else { "✗" };
                         scores_summary.push_str(&format!(
-                            r###"<span style="font-size: 0.78rem; color: #cbd5e1; background: rgba(0,0,0,0.3); padding: 0.2rem 0.5rem; border-radius: 4px;">{}: <b>{}</b> ({:.1}%) {}</span> "###,
+                            r###"<span style="font-size: 0.78rem; color: var(--text-main); background: var(--bg-surface-hover); border: 1px solid var(--card-border-subtle); padding: 0.2rem 0.5rem; border-radius: 4px;">{}: <b>{}</b> ({:.1}%) {}</span> "###,
                             html_escape(&s.username),
                             format_number(s.score),
                             s.accuracy,
@@ -327,9 +351,9 @@ async fn multi_page_handler(State(state): State<AppState>) -> Html<String> {
 
                     match_history_html.push_str(&format!(
                         r###"
-                        <div style="background: rgba(15, 23, 42, 0.4); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; padding: 0.6rem 0.8rem;">
+                        <div style="background: var(--bg-surface-hover); border: 1px solid var(--card-border-subtle); border-radius: 6px; padding: 0.6rem 0.8rem;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
-                                <div style="font-size: 0.82rem; font-weight: 600; color: #e2e8f0;">Round #{} - {}</div>
+                                <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-main);">Round #{} - {}</div>
                                 {winner_badge}
                             </div>
                             <div style="display: flex; flex-wrap: wrap; gap: 0.4rem;">
@@ -346,27 +370,27 @@ async fn multi_page_handler(State(state): State<AppState>) -> Html<String> {
 
             rooms_html.push_str(&format!(
                 r###"
-                <div class="glass-card" style="padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255, 255, 255, 0.1); backdrop-filter: blur(12px);">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.8rem; margin-bottom: 1rem;">
+                <div class="room-card">
+                    <div class="room-header">
                         <div>
-                            <div style="display: flex; align-items: center; gap: 0.6rem;">
-                                <h3 style="font-size: 1.3rem; font-weight: 800; color: #fff; margin: 0;">{}</h3>
-                                <span style="font-family: monospace; font-size: 0.8rem; background: rgba(255,255,255,0.08); padding: 0.2rem 0.5rem; border-radius: 4px; color: #94a3b8;">Room #{}</span>
+                            <div class="room-title-group">
+                                <h3 class="room-title">{}</h3>
+                                <span class="room-id-tag">Room #{}</span>
                             </div>
-                            <div style="color: #94a3b8; font-size: 0.88rem; margin-top: 0.3rem;">Host: <b style="color: #e2e8f0;">{}</b></div>
+                            <div class="room-host">Host: <b>{}</b></div>
                         </div>
                         <div>{status_badge}</div>
                     </div>
 
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.8rem; margin-bottom: 1.2rem; background: rgba(15, 23, 42, 0.4); padding: 0.8rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-                        <div><span style="color:#64748b; font-size:0.75rem; text-transform:uppercase;">Beatmap</span><div style="font-size:0.9rem; margin-top:0.2rem;">{map_link}</div></div>
-                        <div><span style="color:#64748b; font-size:0.75rem; text-transform:uppercase;">Game Mode</span><div style="font-size:0.9rem; font-weight:600; color:#cbd5e1; margin-top:0.2rem;">{}</div></div>
-                        <div><span style="color:#64748b; font-size:0.75rem; text-transform:uppercase;">Ruleset</span><div style="font-size:0.9rem; font-weight:600; color:#cbd5e1; margin-top:0.2rem;">{} &bull; {}</div></div>
-                        <div><span style="color:#64748b; font-size:0.75rem; text-transform:uppercase;">Slots Filled</span><div style="font-size:0.9rem; font-weight:700; color:#f472b6; margin-top:0.2rem;">{}/16 Players</div></div>
+                    <div class="meta-grid">
+                        <div class="meta-item"><span class="meta-lbl">Beatmap</span><div class="meta-val">{map_link}</div></div>
+                        <div class="meta-item"><span class="meta-lbl">Game Mode</span><div class="meta-val">{}</div></div>
+                        <div class="meta-item"><span class="meta-lbl">Ruleset</span><div class="meta-val">{} &bull; {}</div></div>
+                        <div class="meta-item"><span class="meta-lbl">Slots Filled</span><div class="meta-val" style="color: var(--primary); font-weight: 700;">{}/16 Players</div></div>
                     </div>
 
-                    <div style="font-size: 0.85rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.6rem;">Player Slots</div>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.6rem;">
+                    <div class="section-lbl">Player Slots</div>
+                    <div class="slots-grid">
                         {slots_html}
                     </div>
 
@@ -390,77 +414,198 @@ async fn multi_page_handler(State(state): State<AppState>) -> Html<String> {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multiplayer Tracker - Roseflower</title>
+    <title>Live Multiplayer Rooms - AyanomiBancho</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     <style>
         :root {{
-            --bg-base: #0b0f19;
-            --primary: #f472b6;
-            --primary-hover: #ec4899;
-            --text-main: #f8fafc;
+            --bg-base: #11141a;
+            --bg-surface: #181b22;
+            --bg-surface-hover: #1f232c;
+            --card-border: #282d38;
+            --card-border-subtle: #1e222b;
+            --primary: #e0558e;
+            --primary-hover: #c9447a;
+            --accent: #705df2;
+            --text-main: #f1f5f9;
             --text-muted: #94a3b8;
+            --text-sub: #64748b;
+            --emerald: #10b981;
+            --rose: #ef4444;
+            --cyan: #0ea5e9;
+            --amber: #f59e0b;
         }}
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        * {{
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+        }}
         body {{
-            background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #0b0f19 75%);
+            background-color: var(--bg-base);
             color: var(--text-main);
-            font-family: 'Plus Jakarta Sans', sans-serif;
             min-height: 100vh;
-            padding: 2rem 1rem;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
         }}
-        .container {{
-            max-width: 1050px;
+        a {{ color: inherit; text-decoration: none; }}
+
+        /* Flat Navbar */
+        nav {{
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--card-border);
+        }}
+        .nav-container {{
+            max-width: 1440px;
             margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1.25rem;
+            padding: 0.85rem 1.5rem;
         }}
-        .hero {{
+        .nav-brand {{
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-size: 1.35rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: var(--primary);
+        }}
+        .nav-brand-badge {{
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            background: var(--bg-surface-hover);
+            border: 1px solid var(--card-border);
+            color: var(--text-muted);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+        }}
+        .nav-links {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: clamp(0.75rem, 1.35vw, 1.5rem);
+            list-style: none;
+            font-size: 0.92rem;
+            font-weight: 600;
+        }}
+        .nav-links a {{
+            color: var(--text-muted);
+            padding: 0.4rem 0;
+            white-space: nowrap;
+            transition: color 0.15s ease;
+        }}
+        .nav-links a:hover, .nav-links a.active {{
+            color: var(--text-main);
+        }}
+        .nav-links a.active {{
+            border-bottom: 2px solid var(--primary);
+        }}
+        .nav-actions {{
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }}
+        .btn {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem 1.1rem;
+            font-size: 0.88rem;
+            font-weight: 700;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-decoration: none;
+            border: 1px solid transparent;
+        }}
+        .btn-primary {{
+            background: var(--primary);
+            color: #fff;
+        }}
+        .btn-primary:hover {{
+            background: var(--primary-hover);
+        }}
+        .btn-outline {{
+            background: var(--bg-surface-hover);
+            color: var(--text-main);
+            border-color: var(--card-border);
+        }}
+        .btn-outline:hover {{
+            background: var(--card-border);
+        }}
+
+        /* Container & Intro */
+        .main-container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2.5rem 1.5rem;
+            flex: 1;
+            width: 100%;
+        }}
+        .page-intro {{
             text-align: center;
-            margin-bottom: 2.5rem;
+            max-width: 820px;
+            margin: 0 auto 2.5rem auto;
         }}
         .hero-tag {{
-            display: inline-block;
-            padding: 0.35rem 0.8rem;
-            background: rgba(244, 114, 182, 0.15);
-            color: #f472b6;
-            border: 1px solid rgba(244, 114, 182, 0.3);
-            border-radius: 9999px;
-            font-size: 0.75rem;
+            display: inline-flex;
+            align-items: center;
+            background: var(--bg-surface-hover);
+            border: 1px solid var(--card-border);
+            color: var(--primary);
+            padding: 4px 14px;
+            border-radius: 4px;
+            font-size: 0.82rem;
             font-weight: 700;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
             margin-bottom: 0.8rem;
         }}
-        .hero h1 {{
-            font-size: 2.5rem;
+        .page-title {{
+            font-size: clamp(2rem, 3.5vw, 2.6rem);
             font-weight: 900;
-            letter-spacing: -0.5px;
-            background: linear-gradient(135deg, #fff 30%, #f472b6 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.8px;
+            line-height: 1.2;
+            color: var(--text-main);
         }}
-        .hero p {{
+        .page-subtitle {{
+            margin-top: 0.6rem;
             color: var(--text-muted);
-            font-size: 1.05rem;
-            margin-top: 0.5rem;
+            font-size: clamp(0.95rem, 1.8vw, 1.05rem);
+            line-height: 1.6;
         }}
-        .chip-bar {{
+
+        /* Flat Stat Chips */
+        .stat-chips {{
             display: flex;
             justify-content: center;
-            gap: 0.8rem;
+            gap: 0.75rem;
             flex-wrap: wrap;
-            margin-top: 1.2rem;
+            margin-top: 1.4rem;
         }}
-        .chip {{
-            background: rgba(30, 41, 59, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 0.45rem 0.9rem;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            color: #cbd5e1;
+        .stat-chip {{
+            background: var(--bg-surface);
+            border: 1px solid var(--card-border);
+            padding: 0.45rem 1rem;
+            border-radius: 6px;
+            font-size: 0.88rem;
+            color: var(--text-muted);
             display: inline-flex;
             align-items: center;
             gap: 0.4rem;
         }}
-        .chip b {{ color: #fff; }}
+        .stat-chip b {{
+            color: var(--text-main);
+        }}
         .pulse-dot {{
             width: 8px;
             height: 8px;
@@ -468,79 +613,290 @@ async fn multi_page_handler(State(state): State<AppState>) -> Html<String> {
             display: inline-block;
         }}
         .pulse-dot.green {{
-            background: #4ade80;
-            box-shadow: 0 0 8px #4ade80;
+            background: var(--emerald);
         }}
         .pulse-dot.red {{
-            background: #ef4444;
-            box-shadow: 0 0 8px #ef4444;
+            background: var(--rose);
         }}
+
+        /* Flat Empty State */
+        .empty-state {{
+            background: var(--bg-surface);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            padding: 4rem 2rem;
+            text-align: center;
+            max-width: 820px;
+            margin: 0 auto;
+        }}
+        .empty-icon {{
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 1.2rem auto;
+            border-radius: 8px;
+            background: var(--bg-surface-hover);
+            border: 1px solid var(--card-border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--primary);
+        }}
+        .empty-state h3 {{
+            font-size: 1.35rem;
+            font-weight: 800;
+            color: var(--text-main);
+            margin-bottom: 0.5rem;
+        }}
+        .empty-state p {{
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            max-width: 540px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }}
+
+        /* Flat Room Card */
+        .room-card {{
+            background: var(--bg-surface);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }}
+        .room-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 0.8rem;
+            margin-bottom: 1.2rem;
+        }}
+        .room-title-group {{
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+        }}
+        .room-title {{
+            font-size: 1.3rem;
+            font-weight: 800;
+            color: var(--text-main);
+        }}
+        .room-id-tag {{
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            background: var(--bg-surface-hover);
+            border: 1px solid var(--card-border);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            color: var(--text-muted);
+        }}
+        .room-host {{
+            color: var(--text-muted);
+            font-size: 0.88rem;
+            margin-top: 0.3rem;
+        }}
+        .room-host b {{ color: var(--text-main); }}
+
         .multi-badge {{
             display: inline-flex;
             align-items: center;
             gap: 0.4rem;
             padding: 0.3rem 0.65rem;
-            border-radius: 6px;
+            border-radius: 4px;
             font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.5px;
         }}
         .multi-badge.waiting {{
-            background: rgba(34, 197, 94, 0.15);
-            color: #4ade80;
-            border: 1px solid rgba(34, 197, 94, 0.3);
+            background: rgba(16, 185, 129, 0.12);
+            color: var(--emerald);
+            border: 1px solid rgba(16, 185, 129, 0.25);
         }}
         .multi-badge.playing {{
-            background: rgba(239, 68, 68, 0.15);
-            color: #f87171;
-            border: 1px solid rgba(239, 68, 68, 0.3);
+            background: rgba(239, 68, 68, 0.12);
+            color: var(--rose);
+            border: 1px solid rgba(239, 68, 68, 0.25);
         }}
-        footer {{
-            text-align: center;
-            margin-top: 3rem;
-            padding-top: 1.5rem;
-            border-top: 1px solid rgba(255, 255, 255, 0.08);
-            color: #64748b;
+
+        .meta-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.8rem;
+            margin-bottom: 1.2rem;
+            background: var(--bg-surface-hover);
+            padding: 0.8rem 1rem;
+            border-radius: 6px;
+            border: 1px solid var(--card-border-subtle);
+        }}
+        .meta-item .meta-lbl {{
+            color: var(--text-sub);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }}
+        .meta-item .meta-val {{
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-top: 0.2rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .map-link {{
+            color: var(--cyan);
+            font-weight: 600;
+        }}
+        .map-link:hover {{ text-decoration: underline; }}
+        .map-muted {{ color: var(--text-muted); }}
+
+        .section-lbl {{
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.6rem;
+        }}
+        .slots-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 0.6rem;
+        }}
+        .slot-card {{
+            background: var(--bg-surface-hover);
+            padding: 0.6rem 0.8rem;
+            border-radius: 6px;
+            border: 1px solid var(--card-border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }}
+        .slot-user {{
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            overflow: hidden;
+        }}
+        .slot-num {{
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.78rem;
+            color: var(--text-sub);
+        }}
+        .slot-name {{
+            font-weight: 600;
             font-size: 0.85rem;
+            color: var(--text-main);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 110px;
         }}
-        footer a {{
-            color: #f472b6;
-            text-decoration: none;
+        .slot-status {{
+            font-size: 0.75rem;
+            font-weight: 700;
         }}
+        .slot-status.ready {{ color: var(--emerald); }}
+        .slot-status.playing {{ color: var(--primary); }}
+        .slot-status.completed {{ color: var(--cyan); }}
+        .slot-status.not-ready {{ color: var(--text-muted); }}
+        .slot-status.open {{ color: var(--text-sub); }}
+        .team-dot {{
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }}
+        .team-dot.blue {{ background: #3b82f6; }}
+        .team-dot.red {{ background: #ef4444; }}
+
+        /* Flat Footer */
+        footer {{
+            background: var(--bg-surface);
+            border-top: 1px solid var(--card-border);
+            padding: 2.5rem 1.5rem;
+            margin-top: auto;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.88rem;
+        }}
+        .footer-links {{
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+            margin-top: 0.8rem;
+            font-weight: 600;
+        }}
+        .footer-links a:hover {{ color: var(--text-main); }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="hero">
-            <div class="hero-tag">ROSEFLOWER REAL-TIME MULTIPLAYER</div>
-            <h1>Live Multiplayer Rooms</h1>
-            <p>Live monitoring of osu! lobbies, player slots, beatmaps, and round match results on <b>{}</b>.</p>
+    <nav>
+        <div class="nav-container">
+            <a href="{base_url}/" class="nav-brand">
+                <span>AyanomiBancho</span>
+                <span class="nav-brand-badge">Multiplayer</span>
+            </a>
+            <ul class="nav-links">
+                <li><a href="{base_url}/">Home</a></li>
+                <li><a href="{base_url}/leaderboard">Leaderboard</a></li>
+                <li><a href="/multi" class="active">Multiplayer</a></li>
+                <li><a href="{base_url}/rule">Rules</a></li>
+                <li><a href="{base_url}/staff">Staff & Credits</a></li>
+                <li><a href="{base_url}/connect">Connect</a></li>
+            </ul>
+            <div class="nav-actions">
+                <a href="{base_url}/" class="btn btn-outline">Back to Website</a>
+            </div>
+        </div>
+    </nav>
 
-            <div class="chip-bar">
-                <div class="chip">Active Rooms: <b style="color: #f472b6;">{}</b></div>
-                <div class="chip">Players in Multi: <b>{}</b></div>
-                <div class="chip">Completed Rounds: <b>{}</b></div>
-                <div class="chip"><span class="pulse-dot green"></span> Live Sync Active</div>
+    <main class="main-container">
+        <div class="page-intro">
+            <div class="hero-tag">ROSEFLOWER REAL-TIME MULTIPLAYER</div>
+            <h1 class="page-title">Live Multiplayer Rooms</h1>
+            <p class="page-subtitle">
+                Live monitoring of osu! lobbies, player slots, beatmaps, and round match results on <b>{server_name}</b>.
+            </p>
+
+            <div class="stat-chips">
+                <div class="stat-chip">Active Rooms: <b style="color: var(--primary);">{active_rooms}</b></div>
+                <div class="stat-chip">Players in Multi: <b>{total_players}</b></div>
+                <div class="stat-chip">Completed Rounds: <b>{total_rounds}</b></div>
+                <div class="stat-chip"><span class="pulse-dot green"></span> Live Sync Active</div>
             </div>
         </div>
 
         <div id="roomsContainer">
-            {}
+            {rooms_html}
         </div>
+    </main>
 
-        <footer>
-            Roseflower &bull; Dedicated Multiplayer Microservice for <a href="https://hatsuneakiko.io.vn">{}</a>
-        </footer>
-    </div>
+    <footer>
+        <div style="font-weight: 600; margin-bottom: 0.4rem; color: var(--text-main);">AyanomiBancho</div>
+        <div>© 2026 AyanomiBancho • Roseflower Dedicated Multiplayer Microservice</div>
+        <div class="footer-links">
+            <a href="{base_url}/">Home</a>
+            <a href="{base_url}/leaderboard">Leaderboard</a>
+            <a href="/multi">Multiplayer</a>
+            <a href="{base_url}/rule">Rules</a>
+            <a href="{base_url}/staff">Staff & Credits</a>
+            <a href="{base_url}/connect">Connect</a>
+        </div>
+    </footer>
 </body>
 </html>
 "###,
-        html_escape(&state.config.server.name),
-        stats.active_rooms,
-        stats.total_players,
-        stats.total_completed_rounds,
-        rooms_html,
-        html_escape(&state.config.server.name)
+        base_url = base_url,
+        server_name = html_escape(&state.config.server.name),
+        active_rooms = stats.active_rooms,
+        total_players = stats.total_players,
+        total_rounds = stats.total_completed_rounds,
+        rooms_html = rooms_html,
     );
 
     Html(full_html)
