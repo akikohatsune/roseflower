@@ -1,8 +1,9 @@
-﻿[package]
+[package]
 name = "roseflower"
 version = "0.1.0"
 edition = "2021"
 authors = ["akikohatsune <aya@ayanomi.io.vn>"]
+license = "BSD-3-Clause"
 description = "Dedicated real-time multiplayer tracking and management service for AyanomiBancho"
 
 [dependencies]
